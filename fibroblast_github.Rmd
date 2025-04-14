@@ -1,0 +1,105 @@
+---
+title: "fibroblast"
+author: "meilin"
+date: "2025-04-01"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,message = FALSE,warning = FALSE)
+```
+
+```{r load file}
+library(Seurat)
+library(tidyverse)
+library(clusterProfiler)
+library(cowplot)
+library(ggplot2)
+library(patchwork)
+library(dplyr)
+library(forcats)
+library(tidyr)
+
+merged_obj <- readRDS("/Users/xu/Desktop/1_project/ErlCART_Xenium_DermComp_250401193217.rds")
+
+all.genes <- rownames(merged_obj)
+fibroblast <- subset(merged_obj,subset = merged_annotation=="fibroblast")
+fibroblast <- RunPCA(fibroblast,features = all.genes)
+Seurat::ElbowPlot(fibroblast,ndims=50,reduction = "pca")
+fibroblast <- FindNeighbors(fibroblast, dims = 1:20, reduction = "pca")
+fibroblast <- FindClusters(fibroblast, resolution = 1,algorithm = 4)
+fibroblast <- RunUMAP(fibroblast, dims = 1:20, reduction = "pca")
+
+DimPlot(fibroblast, reduction="umap",group.by = c("seurat_clusters"),alpha = 0.2,label = TRUE)
+```
+
+```{r first try}
+gene <- c("ACKR3","COL8A1","DUSP","GSN","SFRP2","SFRP4","PRSS23","COMP","MYOC","ANGPTL7","COL11A1",
+          "COL18A1","COL23A1","APCDD1","NKD2","WIF1",
+          "CD34","PI16",
+          "CXCL12","PLA2G2A","C7",
+          "CCL19","CH25H","IL33","CD74","HLA-DRA",
+          "DPEP1","MYL4","CRABP1","RSPO3","COL24A1","TNN","COCH","MKX","TNMD","HHIP","RSPO4",
+          "RAMP1","PLEKHA6","NGFR","ITGA6","ACTA2","TAGLN","SPARC","IGFBP4","APOE",
+          "CCL8","S100A4","SFRP1","FAP","SPI1","PLIN2","TFAM","THY1","S1PR1")
+color <-c('#E5D2DD', '#53A85F')
+DotPlot(fibroblast, features = gene,cols = color, group.by = "seurat_clusters") +coord_flip()
+
+
+
+```
+
+```{r }
+allmarkers <- FindAllMarkers(fibroblast,only.pos=TRUE,min.pct=0.25,logfc.threshold=0.25, recorrect_umi = FALSE)
+allmarkers_top10<- allmarkers %>%
+    group_by(cluster) %>%
+    dplyr::filter(avg_log2FC > 0 & p_val < 0.05) %>%
+    arrange(desc(avg_log2FC)) %>%  
+    slice_head(n = 10)
+```
+
+```{r annotation}
+cluster5<- subset(fibroblast,subset = seurat_clusters==5)
+cluster5 <- FindClusters(cluster5,resolution = 0.4)
+DimPlot(cluster5)
+cluster5$subpopulation <- "unknown"
+cluster5$subpopulation[cluster5$seurat_clusters%in%c(1)] <- "CCL19+APOE+"
+cluster5$subpopulation[cluster5$seurat_clusters==2] <- "ACTA2+TAGLN+"
+cluster5$subpopulation[cluster5$seurat_clusters==0] <- "IGFBP4+"
+
+fibroblast$subpopulation <- "unknown"
+fibroblast$subpopulation[fibroblast$seurat_clusters%in%c(1,2)] <- "Universal"  
+fibroblast$subpopulation[fibroblast$seurat_clusters%in%c(6)] <- "CCL19+APOE+"  
+fibroblast$subpopulation[fibroblast$seurat_clusters%in%c(11)] <- "CCL8+"
+fibroblast$subpopulation[fibroblast$seurat_clusters%in%c(3,12)] <- "IGFBP4+"
+fibroblast$subpopulation[fibroblast$seurat_clusters%in%c(4)] <- "Superficial"
+fibroblast$subpopulation[fibroblast$seurat_clusters%in%c(7)] <- "S100A4+"
+fibroblast$subpopulation[fibroblast$seurat_clusters%in%c(8)] <- "COL8A1+"
+fibroblast$subpopulation[fibroblast$seurat_clusters%in%c(9)] <- "ACTA2+TAGLN+"
+fibroblast$subpopulation[fibroblast$seurat_clusters%in%c(10)] <- "TNN+COCH+"
+fibroblast$subpopulation <- cluster5$subpopulation
+table(fibroblast$subpopulation)
+DimPlot(fibroblast, reduction="umap",group.by = c("subpopulation"),alpha = 0.2,label = TRUE)
+merged_obj <- merged_obj
+merged_obj$fibroblast_subtype <- "other"
+merged_obj$fibroblast_subtype <- fibroblast$subpopulation
+table(merged_obj$fibroblast_subtype)
+DimPlot(merged_obj,group.by ="fibroblast_subtype" )
+saveRDS(fibroblast,"/Users/xu/Desktop/1_project/fibroblast.rds")
+saveRDS(merged_obj,"/Users/xu/Desktop/1_project/merged_obj.rds")
+```
+
+```{r imageplot}
+
+color <-  c("grey","#e74434","#1864aa","#f8bb6e","#b8aeeb","#fae69e","#71b7ed","#88d8db","#add187","#f2a7da","#f8c7b4", "#cedfef")
+unique_celltypes <- unique(merged_obj$fibroblast_subtype) 
+color_map <- setNames(color[seq_along(unique_celltypes)], unique_celltypes)  
+
+for (group_name in unique(merged_obj$SampleId)) {
+   current_sample <- merged_obj[, merged_obj$SampleId == group_name]
+  print(ImageDimPlot(current_sample, boundaries = 'segmentations',
+             group.by = 'fibroblast_subtype', border.color = NA, dark.background = FALSE,cols = color_map
+             )+ggtitle(group_name)) +
+        scale_color_manual(values = color_map)
+}
+```
