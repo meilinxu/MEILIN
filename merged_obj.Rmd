@@ -1,0 +1,458 @@
+---
+title: "merged_obj"
+author: "meilin"
+date: "2025-03-31"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,message = FALSE,warning = FALSE)
+```
+
+```{r }
+library(Seurat)
+library(ggplot2)
+library(RColorBrewer)
+library(writexl)
+library(tidyverse)
+color <- c(brewer.pal(8,"Paired"), brewer.pal(8,"Set3"),
+           brewer.pal(8,"Set2"), brewer.pal(8,"Accent"),
+           brewer.pal(9,"Pastel1"))
+```
+
+```{r loadfile}
+data2 <- readRDS("/Users/xu/Desktop/CART/data/qcdata/batch2_afterqcdata.rds")
+spe <- readRDS("/Users/xu/Desktop/CART/data/qcdata/2025-02-21_sfe_qc.rds")
+seurat <- readRDS("/Users/xu/Desktop/CART/data/seuratrawdata/batch1_CARTXenium_seurat_250218130928.rds")
+dim(spe@colData)
+cellid <- rownames(spe@colData)
+data1<- seurat[,cellid]
+
+merged_obj <- merge(data1, y = data2)
+merged_obj$batch <- rep(c("batch1", "batch2"), times = c(ncol(data1), ncol(data2)))
+merged_obj <- JoinLayers(merged_obj) 
+```
+
+```{r normalization}
+merged_obj <- NormalizeData(merged_obj,scale.factor = 300)
+all.genes <- rownames(merged_obj)
+merged_obj<- ScaleData(merged_obj ,features = all.genes, split.by=merged_obj@meta.data$SampleId)
+```
+
+```{r cluster}
+merged_obj <- RunPCA(merged_obj,features = all.genes)
+ElbowPlot(merged_obj,ndims=50,reduction = "pca")
+
+merged_obj <- FindNeighbors(merged_obj,dims =1:30)
+merged_obj <- FindClusters(merged_obj,resolution = 1, algorithm = 4)
+merged_obj <- RunUMAP(merged_obj, dims = 1:30)
+DimPlot(merged_obj, reduction ="umap",pt.size = 0.25,alpha = 0.2, label = TRUE, label.size = 2, repel = TRUE,cols = color) 
+
+```
+
+```{r markergenesets}
+dermalgene <- c("KRT5","KRT19","KRT20","KRT17","CDH1","FLG","FAP",
+             " MGST1","PLIN2","FASN","SCD","FABP5","LIPF","PLSCR1","CYP4F8",#sebaceous glands
+              "AQP5", "AQP7",#eccrine glands
+              "KRT77", "GABRP"#apocrine glands 
+              
+              )
+stromalgene <- c("COL1A1","COL1A2","COL5A1","COL6A1","FBN1",
+                    "LUM","TGFB1",
+                    "ACTA2","TAGLN","MYH11","EDNRA","POSTN",#MYO fibroBLAST OR SMC
+                    "PDGFRA","PDGFRB","RGS5",# PERICYTE
+                    "PPARG","ADIPOQ","FABP4 "#adipocyte
+                 
+)
+stromalgene <- c("COL1A1","COL1A2","COL5A1","COL6A1","FBN1",
+                    "LUM","TGFB1",
+                    "ACTA2","TAGLN","MYH11","EDNRA","POSTN",#MYO fibroBLAST OR SMC
+                    "PDGFRA","PDGFRB","RGS5",# PERICYTE
+                    "PPARG","ADIPOQ","FABP4 ","PLIN1", "PLIN4" 
+                 #adipocyte
+)
+vasculargene <- c("VWF","ERG","PECAM1","CD144","CDH5",
+                  "LYVE1","FLT4", "CCL21"#Lymphatic endothelial
+                  )
+immunegene <- c("PTPRC","PAX5",#immune cells
+                "CD19","SELL", "IRF8", "MZB1",#Bcells/pc/pdc
+                "CD14",#monocytes
+                "CD1C",#dentric cells
+                "CD4","CD8A","CD3D","CD3E","CD2",#TC
+                "CD68","CSF1R",#marcrophages
+                "MRC1","CD163",#M2
+                "CD207","CD1A",#langerhans
+                "CPA3","CTSG","KIT","MS4A2","GATA2"#MASTCELL
+)
+smoothmusclegene <- c("MYL9","TAGLN","MYH11")
+melanocytegene <- c("MLANA","KIT","MITF","DST")
+schwann_cellgene <- c("SOX10","GLDN","MPZ", "SCN7A")
+```
+
+```{r marker genes}
+allmarkers <- FindAllMarkers(merged_obj,only.pos=TRUE,min.pct=0.25,logfc.threshold=0.25, recorrect_umi = FALSE)
+write_xlsx(allmarkers, "/Users/xu/Desktop/CART/data/annotation/major celltype/mergeddata/markergene.xlsx")
+allmarkers_top10<- allmarkers %>%
+    group_by(cluster) %>%
+    dplyr::filter(avg_log2FC > 0 & p_val < 0.05) %>%
+    arrange(desc(avg_log2FC)) %>%  
+    slice_head(n = 10)
+write_xlsx(allmarkers_top10,"/Users/xu/Desktop/CART/data/annotation/major celltype/mergeddata/top10markergene.xlsx")
+```
+
+```{r subcluster for annotation}
+for (cluster_id in unique(merged_obj@meta.data$seurat_clusters)) {
+  cluster_subset <- subset(merged_obj, seurat_clusters == cluster_id)
+ assign(paste0("c", cluster_id), cluster_subset)
+}
+
+c6<- FindClusters(c6, resolution = 0.8)
+c6$annotation <- "Unknown"
+c6$annotation[c6$seurat_clusters%in%c(4)] <- "fibroblast"
+c6$annotation[c6$seurat_clusters%in%c(3,5)] <- "macrophage"
+c6$annotation[c6$seurat_clusters%in%c(0,1,2,6,7,8)] <-"T cell"
+
+c11 <- FindClusters(c11, resolution = 0.8)
+c11$annotation <- "Unknown"
+c11$annotation[c11$seurat_clusters%in%c(1,3)] <- "fibroblast"
+c11$annotation[c11$seurat_clusters%in%c(0,2,4)] <-"smooth muscle cell"
+
+c13 <- FindClusters(c13, resolution = 0.8)
+c13$annotation <- "Unknown"
+c13$annotation[c13$seurat_clusters==5] <- "smooth muscle cell"
+c13$annotation[c13$seurat_clusters%in%c(0,1,2,3,4)] <-"keratinocyte"
+
+c18 <- FindClusters(c18, resolution = 0.8)
+c18$annotation <- "Unknown"
+c18$annotation[c18$seurat_clusters==8] <- "fibroblast"
+c18$annotation[c18$seurat_clusters==3] <-  "T cell"
+c18$annotation[c18$seurat_clusters%in%c(0,1,2,4,5,6,7,9)] <-"keratinocyte"
+
+
+c20 <- FindClusters(c20, resolution = 0.8)
+c20$annotation <- "Unknown"
+c20$annotation[c20$seurat_clusters==0] <- "fibroblast"
+c20$annotation[c20$seurat_clusters%in%c(1,2,3,4)] <- "T cell"
+
+c22 <- FindClusters(c22, resolution = 0.8)
+c22$annotation <- "Unknown"
+c22$annotation[c22$seurat_clusters%in%c(1,3)] <- "melanocyte"
+c22$annotation[c22$seurat_clusters%in%c(0,2,4)] <- "keratinocyte"
+
+
+c25 <- FindClusters(c25, resolution = 0.8)
+c25$annotation <- "Unknown"
+c25$annotation[c25$seurat_clusters==2] <- "fibroblast"
+c25$annotation[c25$seurat_clusters%in%c(0,1,3)] <- "Schwann cell"
+
+c31 <- FindClusters(c31, resolution = 0.8)
+c31$annotation <- "Unknown"
+c31$annotation[c31$seurat_clusters%in%c(0,2)] <- "keratinocyte"
+c31$annotation[c31$seurat_clusters%in%c(1,3)] <- "Langerhans cell"
+```
+
+```{r first_annotation}
+merged_obj$first_annotation <- "unknown"
+merged_obj$first_annotation[merged_obj$seurat_clusters%in%c(4,7,8,12,14,15,17,19,21,24,27,30,32)] <- "keratinocyte"
+merged_obj$first_annotation[merged_obj$seurat_clusters%in%c(2,3,9,16)] <- "fibroblast"
+merged_obj$first_annotation[merged_obj$seurat_clusters%in%c(5,28)] <- "endothelial cell"
+merged_obj$first_annotation[merged_obj$seurat_clusters%in%c(29)] <- "adipocyte"
+merged_obj$first_annotation[merged_obj$seurat_clusters%in%c(1,26)] <- "T cell"
+merged_obj$first_annotation[merged_obj$seurat_clusters%in%c(23)] <- "mast cell"
+merged_obj$first_annotation[merged_obj$seurat_clusters%in%c(10)] <- "macrophage"
+merged_obj$first_annotation<- c31$annotation
+merged_obj$first_annotation <- c25$annotation
+merged_obj$first_annotation <- c22$annotation
+merged_obj$first_annotation<- c20$annotation
+merged_obj$first_annotation<- c18$annotation
+merged_obj$first_annotation <- c13$annotation
+merged_obj$first_annotation <- c11$annotation
+merged_obj$first_annotation <- c6$annotation
+table(merged_obj$first_annotation)
+DimPlot(merged_obj, reduction ="umap",pt.size = 0.25,alpha = 0.2 ,label = TRUE, label.size = 2, repel = TRUE,cols = color,group.by = "first_annotation") 
+```
+
+```{r major_celltype}
+merged_obj$major_celltype <- merged_obj$first_annotation
+merged_obj$major_celltype[merged_obj$major_celltype%in%c("Langerhans cell","macrophage","mast cell","T cell")] <- "immune cell"
+table(merged_obj$major_celltype)
+DimPlot(merged_obj, reduction ="umap",pt.size = 0.25,alpha = 0.2, label = TRUE, label.size = 2, repel = TRUE,cols = color,group.by = "major_celltype") 
+
+```
+
+```{r group}
+merged_obj$Patient[merged_obj$SampleId=="SSc213"] <- "Patient2"
+merged_obj$fourgroups <- merged_obj$Group
+merged_obj$fourgroups [merged_obj$Group%in%c("SSc_postCART_1m","SSc_postCART_2m")] <- "SSc_postCART_early"
+merged_obj$fourgroups [merged_obj$Group%in%c("SSc_postCART_4m","SSc_postCART_6m")] <- "SSc_postCART_late"
+merged_obj$fourgroups [merged_obj$Group%in%c("SSc_postCART_9m","SSc_postCART_1y")] <- "SSc_postCART_superlate"
+
+table(merged_obj$fourgroups)
+#saveRDS(merged_obj,"/Users/xu/Desktop/1_project/merged_obj_manually.rds")
+```
+
+```{r integrated with autoresult}
+merged_obj <- readRDS("/Users/xu/Desktop/1_project/merged_obj_manually.rds")
+autodata <- readRDS("/Users/xu/Desktop/CART/data/annotation/major celltype/mergeddata/Erlangen_CART_XeniumScimilarity250320112810.rds")
+DimPlot(autodata, reduction ="umap.unintegrated", pt.size = 0.25, alpha=0.2,label = TRUE, label.size = 5, repel = TRUE,,group.by="scimilarity_hint") 
+table(autodata$scimilarity_hint)
+```
+
+```{r select the different cells}
+unique(autodata@meta.data$scimilarity_hint)
+
+category_mapping <- c(
+  "basal cell" = "keratinocyte",
+  "keratinocyte" = "keratinocyte",
+  "fibroblast" = "fibroblast",
+  "macrophage" = "immune cell",
+  "classical monocyte" = "immune cell",
+  "regulatory T cell" = "immune cell",
+  "CD4-positive, alpha-beta T cell" = "immune cell",
+  "CD8-positive, alpha-beta T cell" = "immune cell",
+  "Langerhans cell" = "immune cell",
+  "mast cell" = "immune cell",
+  "natural killer cell" = "immune cell",
+  "B cell" = "immune cell",
+  "plasma cell" = "immune cell",
+  "neutrophil" = "immune cell",
+  "innate lymphoid cell" = "immune cell",
+  "plasmacytoid dendritic cell" = "immune cell",
+  "platelet" = "platelet",  
+  "progenitor cell" = "progenitor cell",  
+  "erythrocyte" = "erythrocyte",  
+  "myofibroblast cell" = "fibroblast",
+  "capillary endothelial cell" = "endothelial cell",
+  "blood vessel endothelial cell" = "endothelial cell",
+  "endothelial cell of lymphatic vessel" = "endothelial cell",
+  "glial cell" = "Schwann cell",
+  "melanocyte" = "melanocyte",
+  "smooth muscle cell" = "smooth muscle cell",
+  "vascular associated smooth muscle cell" = "smooth muscle cell"
+)
+autodata$scimilarity_hint <- as.character(autodata$scimilarity_hint)
+category_mapping <- unlist(category_mapping)
+autodata@meta.data$major_scimilarity_hint <- category_mapping[autodata@meta.data$scimilarity_hint]
+autodata@meta.data$major_scimilarity_hint[is.na(autodata@meta.data$major_scimilarity_hint)] <- "unknown"
+table(autodata@meta.data$major_scimilarity_hint)
+DimPlot(autodata, reduction ="umap.unintegrated", pt.size = 0.25, label = TRUE, label.size = 5, repel = TRUE,,group.by="major_scimilarity_hint")
+
+autodata$major_celltype <- merged_obj$major_celltype
+
+table(autodata$major_celltype)
+
+diff_annotations <- autodata$major_celltype!= autodata$major_scimilarity_hint
+data_diff <- subset(autodata, cells = which(diff_annotations))
+table(diff_annotations)
+#FALSE  TRUE 
+#63725 10911
+autodata$highlight <- ifelse(diff_annotations, "differ", "same")
+DimPlot(autodata, group.by = "highlight") +
+  ggtitle("UMAP with differing annotations") +
+  scale_color_manual(values = c("#866aa3", "grey")) +
+  theme_minimal()+
+  theme(
+    panel.grid = element_blank(),  
+    plot.title = element_text(face = "bold", size = 16)  
+  )
+
+all.genes <- rownames(data_diff)
+data_diff <- RunPCA(data_diff,features = all.genes)
+ElbowPlot(data_diff,ndims=50,reduction = "pca")
+
+data_diff <- FindNeighbors(data_diff,dims =1:30)
+data_diff <- FindClusters(data_diff,resolution = 1, algorithm = 4)
+data_diff <- RunUMAP(data_diff, dims = 1:30)
+DimPlot(data_diff, reduction ="umap", pt.size = 0.25, label = TRUE, label.size = 3, repel = TRUE,cols = color) 
+allmarkers1 <- FindAllMarkers(data_diff,only.pos=TRUE,min.pct=0.25,logfc.threshold=0.25, recorrect_umi = FALSE)
+allmarkers1_top10<- allmarkers1 %>%
+    group_by(cluster) %>%
+    dplyr::filter(avg_log2FC > 0 & p_val < 0.05) %>%
+    arrange(desc(avg_log2FC)) %>%  
+    slice_head(n = 10)
+write_xlsx(allmarkers1_top10,"/Users/xu/Desktop/diff_top10markergene.xlsx")
+```
+
+```{r merged_annotation}
+for (cluster_id in unique(data_diff@meta.data$seurat_clusters)) {
+  cluster_subset <- subset(data_diff, seurat_clusters == cluster_id)
+ assign(paste0("cl", cluster_id), cluster_subset)
+}
+cl1<- FindClusters(cl1, resolution = 0.8)
+cl1$finalannotation <- "Unknown"
+cl1$finalannotation[cl1$seurat_clusters%in%c(0,6)] <- "fibroblast"
+cl1$finalannotation[cl1$seurat_clusters%in%c(1,2,3,4,5)] <- "smooth muscle cell"
+table(cl1$finalannotation)
+
+cl2<- FindClusters(cl2, resolution = 0.8)
+cl2$finalannotation <- "Unknown"
+cl2$finalannotation[cl2$seurat_clusters%in%c(1,2,4)] <- "fibroblast"
+cl2$finalannotation[cl2$seurat_clusters%in%c(0,3)] <- "keratinocyte"
+table(cl2$finalannotation)
+
+cl3<- FindClusters(cl3, resolution =1.2)
+cl3$finalannotation <- "Unknown"
+cl3$finalannotation[cl3$seurat_clusters%in%c(0,2,3)] <- "fibroblast"
+cl3$finalannotation[cl3$seurat_clusters%in%c(1,4,5,6,7)] <- "immune cell"
+table(cl3$finalannotation)
+
+cl5<- FindClusters(cl5, resolution =1.2)
+cl5$finalannotation <- "Unknown"
+cl5$finalannotation[cl5$seurat_clusters%in%c(3,5,6)] <- "keratinocyte"
+cl5$finalannotation[cl5$seurat_clusters%in%c(0,1,2,4)] <- "adipocyte"
+table(cl5$finalannotation)
+
+cl6<- FindClusters(cl6, resolution =1.2)
+cl6$finalannotation <- "Unknown"
+cl6$finalannotation[cl6$seurat_clusters%in%c(1,2,3,4,5)] <- "immune cell"
+cl6$finalannotation[cl6$seurat_clusters%in%c(0)] <- "fibroblast"
+table(cl6$finalannotation)
+
+cl9<- FindClusters(cl9, resolution =1.2)
+cl9$finalannotation <- "Unknown"
+cl9$finalannotation[cl9$seurat_clusters%in%c(1,3)] <- "fibroblast"
+cl9$finalannotation[cl9$seurat_clusters%in%c(0,2,4,5,6)] <- "endothelial cell"
+table(cl9$finalannotation)
+
+cl10<- FindClusters(cl10, resolution =1.2)
+cl10$finalannotation <- "Unknown"
+cl10$finalannotation[cl10$seurat_clusters%in%c(1,2,3,4,5)] <- "fibroblast"
+cl10$finalannotation[cl10$seurat_clusters%in%c(0)] <- "smooth muscle cell"
+table(cl10$finalannotation)
+
+cl13<- FindClusters(cl13, resolution =1.2)
+cl13$finalannotation <- "Unknown"
+cl13$finalannotation[cl13$seurat_clusters%in%c(0,4)] <- "smooth muscle cell"
+cl13$finalannotation[cl13$seurat_clusters%in%c(1,2,3)] <- "keratinocyte"
+table(cl13$finalannotation)
+
+cl16<- FindClusters(cl16, resolution =1.2)
+cl16$finalannotation <- "Unknown"
+cl16$finalannotation[cl16$seurat_clusters%in%c(0,1,2,4,5)] <- "immune cell"
+cl16$finalannotation[cl16$seurat_clusters%in%c(3)] <- "keratinocyte"
+table(cl16$finalannotation)
+
+cl17<- FindClusters(cl17, resolution =1.2)
+cl17$finalannotation <- "Unknown"
+cl17$finalannotation[cl17$seurat_clusters%in%c(1)] <- "fibroblast"
+cl17$finalannotation[cl17$seurat_clusters%in%c(0,2,3)] <- "smooth muscle cell"
+table(cl17$finalannotation)
+
+cl18<- FindClusters(cl18, resolution =1.2)
+cl18$finalannotation <- "Unknown"
+cl18$finalannotation[cl18$seurat_clusters%in%c(0,1,3)] <- "fibroblast"
+cl18$finalannotation[cl18$seurat_clusters%in%c(2)] <- "keratinocyte"
+table(cl18$finalannotation)
+
+cl19<- FindClusters(cl19, resolution =1.2)
+cl19$finalannotation <- "Unknown"
+cl19$finalannotation[cl19$seurat_clusters%in%c(0,3)] <- "fibroblast"
+cl19$finalannotation[cl19$seurat_clusters%in%c(1,2,4)] <- "immune cell"
+table(cl19$finalannotation)
+```
+
+```{r merged_major_annotation/major_celltype}
+data_diff$finalannotation <- "unkown"
+data_diff$finalannotation[data_diff$seurat_clusters %in%c(4,7,8,14,15)] <-"keratinocyte"
+data_diff$finalannotation[data_diff$seurat_clusters== 12] <-"adipocyte"
+data_diff$finalannotation[data_diff$seurat_clusters==11] <-"Schwann cell"
+data_diff$finalannotation <-cl1$finalannotation
+data_diff$finalannotation <-cl2$finalannotation
+data_diff$finalannotation <-cl3$finalannotation
+data_diff$finalannotation<-cl5$finalannotation
+data_diff$finalannotation<-cl6$finalannotation
+data_diff$finalannotation<-cl9$finalannotation
+data_diff$finalannotation<-cl10$finalannotation
+data_diff$finalannotation <-cl13$finalannotation
+data_diff$finalannotation <-cl16$finalannotation
+data_diff$finalannotation<-cl17$finalannotation
+data_diff$finalannotation<-cl18$finalannotation
+data_diff$finalannotation <-cl19$finalannotation
+table(data_diff$finalannotation)
+DimPlot(data_diff, reduction ="umap", pt.size = 0.25, label = TRUE, label.size = 5, repel = TRUE,cols = color,group.by="finalannotation") 
+####
+reannotated_data <- data_diff@meta.data$finalannotation
+names(reannotated_data) <- rownames(data_diff@meta.data)  
+matching_cells <- intersect(rownames(autodata@meta.data), names(reannotated_data))
+identical(names(reannotated_data[matching_cells]), matching_cells)  
+autodata$major_celltype[rownames(autodata@meta.data) %in% matching_cells] <- reannotated_data[matching_cells]
+table(autodata$major_celltype)
+
+merged_obj $merged_annotation<- autodata$major_celltype
+table(merged_obj$merged_annotation)
+table(merged_obj$first_annotation)
+DimPlot(merged_obj, reduction ="umap", pt.size = 0.25, label = TRUE, label.size = 5, repel = TRUE,group.by="merged_annotation") 
+#
+cladipo <- subset(merged_obj,merged_annotation=="adipocyte")
+cladipo<- FindClusters(cladipo, resolution =1.2)
+cladipo$finalannotation <- "Unknown"
+cladipo$finalannotation[cladipo$seurat_clusters%in%c(0,1,3)] <- "keratinocyte"
+cladipo$finalannotation[cladipo$seurat_clusters%in%c(2,4,5)] <- "adipocyte"
+table(cladipo$finalannotation)
+merged_obj$merged_annotation <- cladipo$finalannotation
+table(merged_obj$merged_annotation)
+####
+clsmc <- subset(merged_obj,merged_annotation=="smooth muscle cell")
+clsmc<- FindClusters(clsmc, resolution =1.2)
+clsmc$finalannotation <- "Unknown"
+clsmc$finalannotation[clsmc$seurat_clusters%in%c(7)] <- "fibroblast"
+clsmc$finalannotation[clsmc$seurat_clusters%in%c(6)] <- "pericyte"
+clsmc$finalannotation[clsmc$seurat_clusters%in%c(8,10)] <- "immune cell"
+clsmc$finalannotation[clsmc$seurat_clusters%in%c(0,1,2,3,4,5,9)] <- "smooth muscle cell"
+table(clsmc$finalannotation)
+merged_obj$merged_annotation<- clsmc$finalannotation
+table(merged_obj$merged_annotation)
+#############
+merged_obj$merged_annotation[merged_obj$merged_annotation=="melanocyte"] <- "keratinocyte"
+table(merged_obj$merged_annotation)
+DimPlot(merged_obj, reduction ="umap", pt.size = 0.25, label = TRUE, label.size = 5, repel = TRUE,cols = color,group.by="merged_annotation")
+```
+
+```{r visulize}
+majormarkergene <- c("KRT5","KRT19","KRT20",
+                     "COL1A1","COL1A2","LUM",
+                     "VWF","ERG","PECAM1",
+                     "CD3E","CD68","CD19",
+                     "MLANA","KIT","MITF",
+                     "MYL9","TAGLN","MYH11",
+                     "SOX10","GLDN","MPZ",
+                     "PDGFRA","PDGFRB","RGS5",# PERICYTE
+                    "PPARG","ADIPOQ","FABP4 ","PLIN1", "PLIN4" 
+                 #adipocyte
+                 )
+
+metadata <- merged_obj@meta.data
+color <-c('#E5D2DD', '#53A85F')
+p <- DotPlot(merged_obj, features = unique(majormarkergene),cols = color, group.by =   "merged_annotation"#, split.by = "group"
+)+coord_flip()
+exp <- p$data
+exp$features.plot <- as.factor(exp$features.plot)
+exp$features.plot <- fct_inorder(exp$features.plot)
+exp$id <- as.factor(exp$id)
+exp$id <- fct_inorder(exp$id)
+colnames(exp)[5] <- 'AverageExpression'
+colnames(exp)[2] <- 'Percent'
+
+cell_types <- levels(exp$id)  
+xintercepts <- seq(1.5, length(cell_types) - 0.5, by=1)  
+
+ggplot(exp, aes(x=id, y=features.plot))+
+  geom_point(aes(size= Percent, color=AverageExpression))+  
+  geom_point(aes(size=Percent, color=AverageExpression), shape=21, color="black", stroke=1)+  
+  scale_size_continuous(range = c(2,6))+  
+  theme(panel.grid = element_blank(),  
+        axis.line = element_blank(),
+        axis.ticks = element_blank(),
+        panel.background = element_rect(color = 'black', size = 1.2, fill = 'transparent'), 
+        axis.text.x = element_text(size=11, color="black", angle=45, hjust = 1),  
+        axis.text.y = element_text(size=11, color="black"))+  
+  scale_color_gradientn(colors = colorRampPalette(c("#c1719c","#d9bad0","#d0ecd7","#a3e0bb","#4fc3b0"))(100))+  
+  labs(x=NULL, y=NULL)+ 
+  geom_vline(xintercept = xintercepts, linetype="dotted", size=0.8)
+```
+
+
+```{r save}
+merged_obj$automaticalannotation <- autodata$scimilarity_hint
+saveRDS(merged_obj,"/Users/xu/Desktop/1_project/merged_obj.rds")
+```
